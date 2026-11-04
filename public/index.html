@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<title>FF Backup Center</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/ops.css">
+</head>
+<body>
+<div id="toast-wrap"></div>
+
+<!-- AUTH SCREEN (teeno panels mein same) -->
+<div id="auth">
+  <div class="auth-wrap">
+    <div class="auth-icon" style="background:linear-gradient(135deg,#0284c7,#38bdf8)">☁️</div>
+    <h2 style="font-size:1.4rem;font-weight:800;margin-bottom:2px;">FF Backup Center</h2>
+    <p style="color:#64748b;font-size:.78rem;margin-bottom:4px;">Owner login — email + password + PIN</p>
+    <p id="a-loading" style="color:#64748b;font-size:0.85rem;margin:18px 0;"><i class="fa-solid fa-spinner fa-spin"></i> Checking session...</p>
+    <form id="login-form" class="hidden" onsubmit="event.preventDefault();A.login()" style="text-align:left;margin-top:18px;">
+      <input class="inp" id="a-email" type="email" name="username" autocomplete="username" placeholder="Admin email" required>
+      <div style="position:relative;">
+        <input class="inp" id="a-pass" type="password" name="password" autocomplete="current-password" placeholder="Password" required style="padding-right:48px;">
+        <i class="fa-solid fa-eye" style="position:absolute;right:16px;top:17px;color:#94a3b8;cursor:pointer;" onclick="A.togglePass(this)"></i>
+      </div>
+      <input class="inp" id="a-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" required>
+      <div id="a-err" style="color:#ef4444;font-size:0.8rem;min-height:20px;margin:-4px 0 10px;text-align:center;"></div>
+      <button class="btn btn-primary btn-full" id="a-btn" type="submit"><i class="fa-solid fa-lock-open"></i> Login</button>
+    </form>
+    <div id="a-err2" style="color:#ef4444;font-size:0.8rem;margin-top:10px;"></div>
+  </div>
+</div>
+<!-- PANEL -->
+<div id="panel" class="hidden">
+
+<!-- HOME -->
+<div id="tab-home" class="tab show">
+  <div class="top-bar">
+    <div class="logo"><span style="color:#0ea5e9">FF</span> Backup</div>
+    <div class="switcher"><span id="switcher"></span><button class="btn btn-outline" style="padding:8px 12px;font-size:.8rem;" onclick="A.opsOpen()" title="Server"><i class="fa-solid fa-server"></i></button><button class="btn btn-outline" style="padding:8px 12px;font-size:.8rem;" onclick="A.logout()"><i class="fa-solid fa-right-from-bracket"></i></button></div>
+  </div>
+  <div class="ops-wrap" id="ops-root"></div>
+
+  <div class="hero g-sky">
+    <small>Telegram backup</small>
+    <div class="big" id="tg-big">…</div>
+    <p id="tg-sub">—</p>
+    <div class="btn-row" style="margin-top:12px;flex-wrap:wrap;" id="tg-btns"></div>
+    <i class="fa-brands fa-telegram bg"></i>
+  </div>
+
+  <div class="page-pad" style="margin-top:12px;">
+    <div id="run-banner"></div>
+
+    <div class="card">
+      <div class="os-h"><span><i class="fa-solid fa-calendar-check"></i> Har mahine ka backup</span>
+        <label class="sw" style="transform:scale(.8);transform-origin:right"><input type="checkbox" id="mo-on" onchange="A.moSave()"><i></i></label></div>
+      <p class="muted" style="margin-bottom:10px;font-size:.72rem">Har data type ki alag JSON file Telegram par jaati hai (main + chat database dono). Service so rahi ho to jaagte hi usi mahine mein chhoota hua backup chal jaata hai.</p>
+      <div class="dc-month2" style="margin:0 0 10px"><span>Din</span><select class="inp" id="mo-day" onchange="A.moSave()" style="width:120px;margin:0;background:#fff"></select><span>Time (IST)</span><input class="inp" type="time" id="mo-time" onchange="A.moSave()" style="width:112px;margin:0"></div>
+      <div class="os-card"><div class="os-kv"><span>Agla backup</span><span id="mo-next">—</span></div><div class="os-kv"><span>Pichla run</span><span id="mo-last">—</span></div></div>
+      <button class="btn btn-outline btn-full big-btn" onclick="A.moRun()"><i class="fa-solid fa-play"></i> Abhi chalao (sab types → Telegram)</button>
+    </div>
+
+    <div class="card">
+      <div class="os-h"><span><i class="fa-solid fa-gauge-simple"></i> Delay / Speed</span><span class="tag" id="pace-tag">—</span></div>
+      <p class="muted" style="margin-bottom:10px;font-size:.72rem">Free server par backup jitna dheere chalega utna panel / bot slow nahi hoga. Har kuch docs ke baad itna aaram milta hai.</p>
+      <div class="speed" id="speed">
+        <button data-m="turbo" onclick="A.setPace('turbo')"><span>🚀</span>Turbo<small>tez, CPU zyada</small></button>
+        <button data-m="normal" onclick="A.setPace('normal')"><span>⚖️</span>Normal<small>balanced</small></button>
+        <button data-m="slow" onclick="A.setPace('slow')"><span>🐢</span>Slow<small>2x aaram</small></button>
+        <button data-m="ultra" onclick="A.setPace('ultra')"><span>🪨</span>Ultra<small>4x aaram</small></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="os-h"><span><i class="fa-solid fa-clock-rotate-left"></i> Auto full-backup</span></div>
+      <select id="bk-int" class="inp"><option value="0">Off</option><option value="6">Har 6 ghante</option><option value="12">Har 12 ghante</option><option value="24">Roz (24h)</option><option value="168">Har hafte</option></select>
+      <input type="number" id="bk-keep" class="inp" min="1" max="100" placeholder="Kitne auto-backup rakhne hain (default 10)">
+      <button class="btn btn-primary btn-full" onclick="A.bkSaveSchedule()">Save schedule</button>
+      <div id="bk-last" class="muted" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="card">
+      <div class="os-h"><span><i class="fa-solid fa-broom"></i> Maintenance</span>
+        <label class="sw" style="transform:scale(.8);transform-origin:right"><input type="checkbox" id="mt-on" onchange="A.mtSave()"><i></i></label></div>
+      <p class="muted" style="font-size:.72rem">Unverified signup cleanup — jinhone 20 min mein email verify nahi kiya unke khaali accounts har 6 ghante mein hatte hain (heavy kaam, isliye yahan).</p>
+      <div class="os-card" style="margin-top:8px"><div class="os-kv"><span>Pichla run</span><span id="mt-last">—</span></div></div>
+      <button class="btn btn-outline btn-full big-btn" onclick="A.mtRun()"><i class="fa-solid fa-play"></i> Abhi chalao</button>
+      <div class="os-h" style="margin-top:16px"><span><i class="fa-regular fa-hourglass-half"></i> Chat messages 24h cleanup</span>
+        <label class="sw" style="transform:scale(.8);transform-origin:right"><input type="checkbox" id="mt-ttl-on" onchange="A.mtSave()"><i></i></label></div>
+      <p class="muted" style="font-size:.72rem">User app mein chat messages sirf 24 ghante (admin ke Chat Manager mein badal sakte ho) dikhte hain. Yeh job expired messages chat database se delete karti hai (har 12 ghante).</p>
+      <div class="os-card" style="margin-top:8px"><div class="os-kv"><span>Pichla run</span><span id="mt-ttl-last">—</span></div></div>
+      <button class="btn btn-outline btn-full big-btn" onclick="A.mtRun('chat')"><i class="fa-solid fa-play"></i> Abhi chalao</button>
+    </div>
+
+    <div class="card"><div class="os-h"><span><i class="fa-solid fa-hard-drive"></i> Server storage</span></div>
+      <div class="os-kv"><span>Saved backups</span><span id="st-files">—</span></div><div class="os-kv"><span>Disk free</span><span id="st-disk">—</span></div>
+      <div class="os-note">Render free plan ka disk restart par saaf ho jata hai — isliye backup Telegram par bhi jaata hai. Zaroori backup download karke bhi rakho.</div></div>
+  </div>
+</div>
+
+<!-- BACKUP -->
+<div id="tab-backup" class="tab">
+  <div class="top-bar"><h2 style="font-size:1.1rem;font-weight:800;"><i class="fa-solid fa-cloud-arrow-down" style="color:#059669;"></i> Backup / Restore</h2></div>
+  <div class="page-pad" style="padding-top:14px;">
+    <div class="card"><div class="card-h">Naya backup</div>
+      <p class="muted">Server par save hota hai, yahin se download bhi. Kuch collections chuno ya sab.</p>
+      <div id="bk-cols" class="chips"><span class="muted">Loading…</span></div>
+      <label class="chk"><input type="checkbox" id="bk-sub" checked> Subcollections bhi (transactions, notifications…)</label>
+      <div class="btn-row"><button class="btn btn-success" style="flex:2" onclick="A.bkCreate()"><i class="fa-solid fa-cloud-arrow-down"></i> Backup banao</button>
+        <button class="btn btn-outline" style="flex:1" id="bk-tg" onclick="A.bkCreate(true)"><i class="fa-brands fa-telegram"></i> + TG</button></div></div>
+    <div class="card"><div class="card-h">Saved backups</div><div id="bk-list"><span class="muted">Loading…</span></div></div>
+    <div class="card"><div class="card-h">File se restore</div><p class="muted">.ffbak.gz ya purana .json backup. Existing docs overwrite honge.</p>
+      <input type="file" id="restore-file" accept=".gz,.json" class="inp"><button class="btn btn-danger btn-full" onclick="A.bkUploadRestore()"><i class="fa-solid fa-upload"></i> Upload &amp; Restore</button></div>
+  </div>
+</div>
+
+<!-- DATA CENTER -->
+<div id="tab-dc" class="tab">
+  <div class="top-bar"><h2 style="font-size:1.1rem;font-weight:800;"><i class="fa-solid fa-database" style="color:#0ea5e9;"></i> Data Center</h2></div>
+  <div class="page-pad" style="padding-top:14px;"><p class="muted" style="margin:0 4px 10px;font-size:.72rem">12 data types — download / upload / purana delete (Telegram backup ke baad) / auto-delete. Counts dheere-dheere load hote hain (heavy).</p>
+    <div id="dc-types"></div>
+    <div class="card"><div class="card-h">Recent export files</div><div id="dc-files"><span class="muted">—</span></div></div>
+    <input type="file" id="dc-file" accept=".json" style="display:none"></div>
+</div>
+
+<!-- DELETE -->
+<div id="tab-data" class="tab">
+  <div class="top-bar"><h2 style="font-size:1.1rem;font-weight:800;"><i class="fa-solid fa-trash-can" style="color:#e11d48;"></i> Data Delete</h2></div>
+  <div class="page-pad" style="padding-top:14px;">
+    <div class="warn"><i class="fa-solid fa-triangle-exclamation"></i> Har delete se pehle PIN lagta hai aur (default) auto-backup banta hai. Firebase <b>login accounts</b> yahan se delete nahi hote — sirf Firestore data.</div>
+    <div class="card"><div class="card-h">Collections</div><div id="dd-cols"><span class="muted">Tap karke load karo</span></div><button class="btn btn-outline btn-full" style="margin-top:8px" onclick="A.ddLoad()">Collections load karo</button></div>
+    <div class="card"><div class="card-h">Purana data saaf karo</div><p class="muted">Jaise world_messages jo 30 din se purane hain.</p>
+      <select id="dd-old-col" class="inp"></select><input class="inp" id="dd-old-field" placeholder="Date field (e.g. createdAt)" value="createdAt">
+      <select id="dd-old-type" class="inp"><option value="ms">Field number (milliseconds)</option><option value="ts">Field Firestore Timestamp</option></select>
+      <input class="inp" id="dd-old-days" type="number" min="0" placeholder="Kitne din se purana (e.g. 30)">
+      <button class="btn btn-danger btn-full" onclick="A.ddOlder()">Purane docs delete karo</button></div>
+    <div class="card"><div class="card-h">Ek document delete</div><input class="inp" id="dd-doc-path" placeholder="users/abc123  ya  users/abc123/transactions/xyz">
+      <label class="chk"><input type="checkbox" id="dd-doc-sub" checked> Uski subcollections bhi</label><button class="btn btn-danger btn-full" onclick="A.ddDoc()">Document delete karo</button></div>
+  </div>
+</div>
+
+<!-- NAV -->
+<div class="nav">
+  <div class="nav-btn active" id="nav-home" onclick="A.goTab('home')"><i class="fa-solid fa-house"></i><span>Home</span></div>
+  <div class="nav-btn" id="nav-backup" onclick="A.goTab('backup')"><i class="fa-solid fa-cloud-arrow-down"></i><span>Backup</span></div>
+  <div class="nav-btn" id="nav-dc" onclick="A.goTab('dc')"><i class="fa-solid fa-database"></i><span>Data</span></div>
+  <div class="nav-btn" id="nav-data" onclick="A.goTab('data')"><i class="fa-solid fa-trash-can"></i><span>Delete</span></div>
+</div>
+</div><!-- end panel -->
+
+<!-- TELEGRAM ACCOUNT -->
+<div class="overlay" id="m-tg"><div class="sheet">
+  <div class="sheet-title"><i class="fa-brands fa-telegram" style="color:#0ea5e9;"></i> Telegram Backup Account</div>
+  <p class="muted" style="margin:-8px 0 12px;">Backups (auto-delete se pehle + month-end) is account ke Telegram par file ke roop mein jaate hain.</p>
+  <div class="lbl">API ID</div><input class="inp" id="tg-id" inputmode="numeric" placeholder="e.g. 1234567" autocomplete="off">
+  <div class="lbl">API Hash</div><input class="inp" id="tg-hash" placeholder="32 character hash (my.telegram.org)" autocomplete="off">
+  <div class="lbl">Telethon Session String</div><textarea class="inp" id="tg-sess" rows="3" placeholder="1BVts…  (StringSession)" autocomplete="off"></textarea>
+  <div class="lbl">Send files to</div><input class="inp" id="tg-chat" value="me" placeholder="me = Saved Messages, ya @username / chat id">
+  <details class="tg-help"><summary>Session string kaise banaye?</summary>
+<pre>pip install telethon
+python - &lt;&lt;'EOF'
+from telethon.sync import TelegramClient
+from telethon.sessions import StringSession
+with TelegramClient(StringSession(), API_ID, "API_HASH") as c:
+    print(c.session.save())
+EOF</pre></details>
+  <div class="btn-row"><button class="btn btn-outline" style="flex:1;" onclick="A.closeModal('m-tg')">Cancel</button><button class="btn btn-primary" style="flex:1;" onclick="A.tgSave()"><i class="fa-solid fa-floppy-disk"></i> Save account</button></div>
+</div></div>
+
+<!-- OPS SHEET: Render / UptimeRobot / Self revive -->
+<div class="overlay" id="m-ops"><div class="sheet">
+  <div class="sheet-title"><i class="fa-solid fa-server" style="color:var(--primary)"></i> Server &amp; Revive</div>
+  <div id="ops-body"></div>
+  <button class="btn btn-outline btn-full" style="margin-top:12px" onclick="A.closeModal('m-ops')">Close</button>
+</div></div>
+
+<!-- JOB BAR -->
+<div id="job-bar" class="job-bar hidden"><i class="fa-solid fa-spinner fa-spin" id="job-ic"></i><span id="job-txt"></span></div>
+
+<!-- DANGER / PIN MODAL -->
+<div class="overlay" id="m-danger">
+  <div class="sheet">
+    <div class="sheet-title" id="dg-title">Confirm</div>
+    <p id="dg-text" class="muted" style="margin:-8px 0 14px;"></p>
+    <div id="dg-typed-wrap"><label class="lbl">Confirm ke liye type karo: <b id="dg-typed-want"></b></label><input class="inp" id="dg-typed" autocomplete="off"></div>
+    <label class="chk" id="dg-bk-wrap"><input type="checkbox" id="dg-bk" checked> <span id="dg-bk-lbl">Pehle auto-backup lo (recommended)</span></label>
+    <input class="inp" id="dg-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Admin PIN">
+    <div class="btn-row">
+      <button class="btn btn-outline" style="flex:1;" id="dg-cancel">Cancel</button>
+      <button class="btn btn-danger" style="flex:1;" id="dg-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+<script type="module" src="js/shell.js"></script>
+<script type="module" src="js/ops.js"></script>
+<script type="module" src="js/backup-panel.js"></script>
+</body>
+</html>
