@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: ff-backup
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: OWNER_EMAIL
+        sync: false
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: OWNER_PIN
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FIREBASE_CREDENTIALS_B64
+        sync: false
+      - key: FIREBASE_CREDENTIALS_B641
+        sync: false
+      - key: LOGIN_MAX_FAILS
+        value: "5"
+      - key: LOGIN_LOCK_MINUTES
+        value: "60"
+      - key: BACKUP_INTERVAL_HOURS
+        value: "24"
+      - key: BACKUP_KEEP
+        value: "10"
+      - key: AUTO_BACKUP_TELEGRAM
+        value: "true"
+      - key: SLOW_FACTOR
+        value: "1"
+      - key: BACKUP_PACE_EVERY
+        value: "200"
+      - key: BACKUP_PACE_REST
+        value: "0.5"
+      - key: PANEL_MAIN_URL
+        sync: false
+      - key: PANEL_PAYMENT_URL
+        sync: false
+      - key: PANEL_BACKUP_URL
+        sync: false
+      - key: UPTIMEROBOT_API_KEY
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_ID
+        sync: false
+      - key: KEEPALIVE
+        value: "false"
+      - key: KEEPALIVE_INTERVAL
+        value: "600"
