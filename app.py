@@ -6,7 +6,8 @@ from flask import Flask, jsonify, request, send_from_directory, send_file, g
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-import fb, security, backup, sysmon, datacenter, tgbackup, jobs, slow, keepalive, opsapi
+import re
+import fb, security, backup, sysmon, datacenter, tgbackup, jobs, slow, keepalive, opsapi, usage, usermgr
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(ROOT, "public")
@@ -73,6 +74,14 @@ opsapi.register_ops(app, bot_status_fn=_job_slim, disk_dir=backup.BACKUP_DIR)
 def job(jid):
     j = backup.get_job(jid)
     return ok(job=j) if j else bad("Job nahi mila", 404)
+
+
+def _pick(v):
+    """('main'|'chat', firestore client). Firebase 2 (chat) alag project na ho to ValueError."""
+    w = "chat" if v == "chat" else "main"
+    if w == "chat" and not fb.chat_separate():
+        raise ValueError("Firebase 2 (chat) alag project nahi hai — FIREBASE_CREDENTIALS_B641 set karo")
+    return w, usage.db_of(w)
 
 
 def _start(kind, fn, *a, **kw):
@@ -249,28 +258,32 @@ def tg_remove():
 
 
 # ------------------------------------------------------------------ backups
-_col_cache = {"t": 0.0, "v": None}
+_col_cache = {}          # which -> {"t":..,"v":..}
 _col_lock = threading.Lock()
 
 
 @app.get("/api/collections")
 @security.login_required
 def collections():
-    """Collection counts: 2 min cache + har count ke beech 0.4s aaram (pehle sab ek saath)."""
-    if _col_cache["v"] is not None and time.time() - _col_cache["t"] < 120:
-        return ok(collections=_col_cache["v"])
+    """Collection counts: 2 min cache + har count ke beech 0.4s aaram (pehle sab ek saath). ?db=chat -> Firebase 2."""
+    try: w, db = _pick(request.args.get("db"))
+    except ValueError as e: return bad(str(e))
+    hit = _col_cache.get(w)
+    if hit and time.time() - hit["t"] < 120:
+        return ok(collections=hit["v"])
     with _col_lock:
-        if _col_cache["v"] is not None and time.time() - _col_cache["t"] < 120:
-            return ok(collections=_col_cache["v"])
+        hit = _col_cache.get(w)
+        if hit and time.time() - hit["t"] < 120:
+            return ok(collections=hit["v"])
         try:
-            cols = backup.list_root_collections()
+            cols = backup.list_root_collections(db)
         except Exception as e:
             return bad(f"Firestore error: {e}", 500)
         out = []
         for c in cols:
-            out.append({"name": c, "count": backup.count_docs(c)})
+            out.append({"name": c, "count": backup.count_docs(c, db)})
             slow.rest(0.4)
-        _col_cache.update(t=time.time(), v=out)
+        _col_cache[w] = {"t": time.time(), "v": out}
     return ok(collections=out)
 
 
@@ -284,6 +297,8 @@ def backups():
 @security.login_required
 def backup_create():
     d = request.get_json(silent=True) or {}
+    try: w, db = _pick(d.get("db"))
+    except ValueError as e: return bad(str(e))
     cols = [c for c in (d.get("collections") or []) if isinstance(c, str) and "/" not in c] or None
     subs = bool(d.get("subcollections", True))
     if d.get("telegram"):
@@ -291,13 +306,13 @@ def backup_create():
             return bad("Telegram account add nahi hai", 400)
 
         def run(job):
-            res = backup.do_backup(job, cols, subs, "manual")
+            res = backup.do_backup(job, cols, subs, "manual", db, w)
             job["progress"] = "Telegram par bhej raha hu…"
             tgbackup.send([(os.path.join(backup.BACKUP_DIR, res["name"]), f"🗂 Manual backup — {res['docs']} docs")])
             res["telegram"] = True
             return res
         return _start("backup", run)
-    return _start("backup", backup.do_backup, cols, subs, "manual")
+    return _start("backup", backup.do_backup, cols, subs, "manual", db, w)
 
 
 @app.get("/api/backups/<name>/download")
@@ -319,8 +334,10 @@ def backup_restore(name):
     p = backup.backup_path(name)
     if not p:
         return bad("File nahi mili", 404)
-    only = (request.get_json(silent=True) or {}).get("collections")
-    return _start("restore", backup.do_restore, p, only)
+    body = request.get_json(silent=True) or {}
+    try: w, db = _pick(body.get("db"))
+    except ValueError as e: return bad(str(e))
+    return _start("restore", backup.do_restore, p, body.get("collections"), db, w)
 
 
 @app.post("/api/restore-upload")
@@ -329,6 +346,8 @@ def restore_upload():
     f = request.files.get("file")
     if not f:
         return bad("File select karo")
+    try: w, db = _pick(request.form.get("db"))
+    except ValueError as e: return bad(str(e))
     fn = f.filename or ""
     ext = ".ffbak.gz" if fn.endswith(".ffbak.gz") else (".json.gz" if fn.endswith(".json.gz") else ".json")
     tmp = os.path.join(backup.BACKUP_DIR, f"upload_{int(time.time())}{ext}")
@@ -336,7 +355,7 @@ def restore_upload():
 
     def run(job, path):
         try:
-            return backup.do_restore(job, path)
+            return backup.do_restore(job, path, None, db, w)
         finally:
             try: os.remove(path)
             except OSError: pass
@@ -356,28 +375,34 @@ def backup_settings():
 @security.pin_required
 def del_collection():
     d = request.get_json(silent=True) or {}
+    try: w, db = _pick(d.get("db"))
+    except ValueError as e: return bad(str(e))
     col = (d.get("collection") or "").strip()
     if not col or "/" in col:
         return bad("Collection ka naam galat hai")
     if d.get("confirm") != col:
         return bad("Confirm text collection ke naam se match nahi hua")
-    return _start("delete", backup.do_delete_collection, col, bool(d.get("backup", True)))
+    return _start("delete", backup.do_delete_collection, col, bool(d.get("backup", True)), db, w)
 
 
 @app.post("/api/data/delete-doc")
 @security.pin_required
 def del_doc():
     d = request.get_json(silent=True) or {}
+    try: w, db = _pick(d.get("db"))
+    except ValueError as e: return bad(str(e))
     path = (d.get("path") or "").strip().strip("/")
     if not path or len(path.split("/")) % 2 != 0:
         return bad("Doc path galat (format: collection/docId)")
-    return _start("delete", backup.do_delete_doc, path, bool(d.get("recursive", True)), bool(d.get("backup", True)))
+    return _start("delete", backup.do_delete_doc, path, bool(d.get("recursive", True)), bool(d.get("backup", True)), db, w)
 
 
 @app.post("/api/data/delete-older")
 @security.pin_required
 def del_older():
     d = request.get_json(silent=True) or {}
+    try: w, db = _pick(d.get("db"))
+    except ValueError as e: return bad(str(e))
     col, field = (d.get("collection") or "").strip(), (d.get("field") or "").strip()
     try:
         days = float(d.get("days"))
@@ -386,8 +411,122 @@ def del_older():
     if not col or "/" in col or not field or days < 0:
         return bad("Collection / field / days check karo")
     return _start("delete", backup.do_delete_older, col, field, days,
-                  "ts" if d.get("type") == "ts" else "ms", bool(d.get("backup", True)))
+                  "ts" if d.get("type") == "ts" else "ms", bool(d.get("backup", True)), db, w)
 
+
+
+# ------------------------------------------------------------------ FIREBASE USAGE (Firebase 1 + Firebase 2)
+@app.get("/api/fbu/overview")
+@security.login_required
+def fbu_overview():
+    try: return ok(**usage.overview())
+    except Exception as e: return bad(f"Overview error: {e}", 500)
+
+
+@app.get("/api/fbu/ops")
+@security.login_required
+def fbu_ops():
+    w = "chat" if request.args.get("db") == "chat" else "main"
+    if w not in usage.dbs_available(): return bad("Firebase 2 (chat) alag project nahi hai")
+    return ok(ops=usage.live_ops(w, bool(request.args.get("fresh"))))
+
+
+@app.post("/api/fbu/scan")
+@security.login_required
+def fbu_scan():
+    """Storage / data scan. sample=0 -> exact (har doc padhta hai = reads kharch) -> PIN chahiye."""
+    d = request.get_json(silent=True) or {}
+    w = d.get("db") or "both"
+    if w not in ("main", "chat", "both"): return bad("db galat hai")
+    if w == "chat" and not fb.chat_separate(): return bad("Firebase 2 (chat) alag project nahi hai")
+    try: sample = max(0, min(1000, int(d.get("sample", usage.SAMPLE_DEFAULT))))
+    except (TypeError, ValueError): return bad("sample number hona chahiye")
+    if sample == 0:
+        wait = security.locked_for(security.client_ip())
+        if wait: return bad(f"Bahut galat PIN. {wait // 60 + 1} min baad try karo.", 429)
+        if not security.check_pin(d.get("pin")): return jsonify(ok=False, error="PIN galat hai", code="pin"), 403
+    return _start("usage-scan", lambda job: usage.run_scan(job, w, sample))
+
+
+@app.post("/api/fbu/cfg")
+@security.login_required
+def fbu_cfg():
+    d = request.get_json(silent=True) or {}
+    try: return ok(cfg=usage.save_cfg(d))
+    except (ValueError, TypeError) as e: return bad(f"Value galat: {e}")
+
+
+# ------------------------------------------------------------------ USER MANAGER (Firebase 1)
+_UID_RE = re.compile(r"^[A-Za-z0-9_\-:.]{1,128}$")
+
+
+def _um(fn, *a, **kw):
+    try: return ok(**fn(*a, **kw))
+    except ValueError as e: return bad(str(e), 400)
+    except LookupError as e: return bad(str(e), 404)
+    except Exception as e: return bad(f"{type(e).__name__}: {str(e)[:160]}", 500)
+
+
+@app.get("/api/um/search")
+@security.login_required
+def um_search():
+    try: return ok(users=usermgr.search(request.args.get("q")))
+    except ValueError as e: return bad(str(e))
+    except Exception as e: return bad(f"Search error: {str(e)[:160]}", 500)
+
+
+@app.get("/api/um/user/<uid>")
+@security.login_required
+def um_user(uid):
+    if not _UID_RE.match(uid): return bad("uid galat hai")
+    return _um(usermgr.get_user, uid)
+
+
+@app.post("/api/um/user/<uid>/name")
+@security.pin_required
+def um_name(uid):
+    if not _UID_RE.match(uid): return bad("uid galat hai")
+    d = request.get_json(silent=True) or {}
+    return _um(usermgr.set_name, uid, d.get("name"), bool(d.get("reset_limit")))
+
+
+@app.post("/api/um/user/<uid>/fields")
+@security.pin_required
+def um_fields(uid):
+    if not _UID_RE.match(uid): return bad("uid galat hai")
+    d = request.get_json(silent=True) or {}
+    if not isinstance(d.get("set") or {}, dict) or not isinstance(d.get("delete") or [], list): return bad("Format galat")
+    return _um(usermgr.set_fields, uid, d.get("set"), d.get("delete"))
+
+
+@app.post("/api/um/user/<uid>/fill")
+@security.pin_required
+def um_fill(uid):
+    if not _UID_RE.match(uid): return bad("uid galat hai")
+    return _um(usermgr.fill_missing, uid)
+
+
+@app.post("/api/um/user/<uid>/password")
+@security.pin_required
+def um_password(uid):
+    if not _UID_RE.match(uid): return bad("uid galat hai")
+    d = request.get_json(silent=True) or {}
+    if d.get("reset_link"): return _um(usermgr.reset_link, uid)
+    return _um(usermgr.set_password, uid, d.get("password"))
+
+
+@app.post("/api/um/user/<uid>/auth")
+@security.pin_required
+def um_auth(uid):
+    if not _UID_RE.match(uid): return bad("uid galat hai")
+    d = request.get_json(silent=True) or {}
+    return _um(usermgr.set_auth_flags, uid, d.get("disabled"), d.get("email_verified"))
+
+
+@app.post("/api/um/stats")
+@security.login_required
+def um_stats():
+    return _start("um-stats", usermgr.auth_stats)
 
 
 @app.errorhandler(500)

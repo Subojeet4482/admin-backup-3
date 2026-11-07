@@ -1,7 +1,7 @@
 """Service 3 ke background kaam (heavy): Data Center scheduler (auto-delete + monthly backup) aur unverified-signup cleanup.
 Sab supervised threads mein — crash ho to khud dobara chalte hain."""
 import time
-import fb, datacenter, slow, keepalive
+import fb, datacenter, slow, keepalive, backup, usage
 
 state = {"dc_tick": {"last": None, "error": None}, "cleanup": {"last": None, "result": None, "error": None}, "chat_ttl": {"last": None, "result": None, "error": None}}
 _cfg = {"t": 0, "v": {}}
@@ -64,15 +64,16 @@ def _purge_col(db, col, cutoff_ms):
 
 def purge_chat_messages(max_docs=20000):
     """Chat messages older than the message life (cconfig/world.ttlHours, default 24h) are deleted from the chat database:
-    world room + every friend chat + every group. Phones also hide them instantly, this just frees the database."""
+    world room + groups (ttlHours) and every friend chat (DM) after 7 days. Phones also hide them instantly, this just frees the database."""
     db = fb.get_chat_db()
     w = db.collection("cconfig").document("world").get()
     ttl = max(1, min(168, int(((w.to_dict() or {}).get("ttlHours") if w.exists else 24) or 24)))
     cutoff = int((time.time() - ttl * 3600) * 1000)
     removed = _purge_col(db, db.collection("cworld"), cutoff)
-    for root in ("cchats", "cgroups"):
+    dm_cutoff = int((time.time() - 7 * 86400) * 1000)      # friend chats (DM): the server keeps 7 days (phones keep their own copy)
+    for root, cut in (("cchats", dm_cutoff), ("cgroups", cutoff)):
         for s in db.collection(root).select([]).stream():
-            removed += _purge_col(db, s.reference.collection("msgs"), cutoff)
+            removed += _purge_col(db, s.reference.collection("msgs"), cut)
             slow.rest(0.15)
             if removed >= max_docs: return removed
     return removed
@@ -100,7 +101,7 @@ def run_cleanup():
 
 def _loop():
     t0 = time.time()
-    last = {"dc": t0 - 600 + 120, "clean": t0 - 21600 + 600, "ttl": t0 - 43200 + 900}
+    last = {"dc": t0 - 600 + 120, "clean": t0 - 21600 + 600, "ttl": t0 - 43200 + 900, "usage": t0 - 600 + 400}
     time.sleep(150)                      # boot ke 2.5 min baad
     while True:
         t = time.time()
@@ -108,6 +109,11 @@ def _loop():
             last["dc"] = t
             try: datacenter._tick(); state["dc_tick"].update(last=int(t * 1000), error=None)
             except Exception as e: state["dc_tick"].update(error=str(e)[:160]); print("[jobs] dc:", e, flush=True)
+            slow.rest(5)
+        if t - last["usage"] >= 600:
+            last["usage"] = t
+            try: usage.tick(backup.run_job)
+            except Exception as e: print("[jobs] usage:", e, flush=True)
             slow.rest(5)
         if t - last["clean"] >= 21600 and maint_cfg().get("cleanup", True):
             last["clean"] = t

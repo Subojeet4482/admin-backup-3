@@ -9,6 +9,8 @@ Sab kuch **slow-mode (delay)** ke saath chalta hai taaki free server na atke.
 - **Data**: 12 types — download, upload, purana delete (pehle Telegram backup), auto-delete schedule
 - **Delete**: collection / purana data / single doc — PIN + auto-backup ke saath
 - **Maintenance** (Home): unverified-signup cleanup + **Chat messages 24h cleanup** (user app mein messages 24 ghante baad hat jate hain; yeh job chat database se expired messages delete karti hai, har 12 ghante)
+- **Firebase** (naya): Firebase 1 (main) vs Firebase 2 (chat) — storage kitna bhara / kitna bacha, **pehle kitna tha → ab**, trend, collection-wise size, aaj ke reads / writes / deletes (quota ke saath), har collection ka backup / Telegram / delete, file upload-restore, limits + Telegram alert
+- **Users** (naya): user dhoondho (email / Player ID / UID / naam), poora profile dekho, naam + password badlo (ya reset link), missing fields add, field edit / add / delete, login disable-enable, Auth users ka count. Paisa fields yahan se edit nahi hote.
 - Top strip: Render · UptimeRobot · Self revive
 
 ## Monthly backup aur sleep
@@ -29,3 +31,11 @@ Render free ka disk restart par saaf hota hai. Isliye backup Telegram par bhi ja
 5. UptimeRobot: **Add New Monitor → HTTP(s)** → URL `https://<service>.onrender.com/health` → interval **5 min**.
    Phir UptimeRobot → My Settings → API → **Read-only API key** → env `UPTIMEROBOT_API_KEY`. Ab panel ke top strip mein uptime % dikhega.
 6. Panel ke header mein **server icon** dabao — Render status, UptimeRobot, Self-revive aur env check ek jagah.
+
+## Firebase Usage — zaroori setup
+- **Storage** ek *andaza* hai (docs ka size Firestore formula se; sample x count). "Exact" scan har doc padhta hai (reads lagte hain, PIN chahiye). Asli billing number: Firebase Console -> Firestore -> Usage.
+- **Reads / Writes / Deletes** ke liye har Firebase project mein: (1) *Cloud Monitoring API* enable, (2) service account (firebase-adminsdk-…) ko **Monitoring Viewer** role. Panel mein link aate hain. Bina iske storage/scan chalega, reads/writes nahi dikhenge.
+- Firebase 2 ke liye `FIREBASE_CREDENTIALS_B641` env zaroori hai.
+- Limits default Spark plan (1 GB, 50k reads, 20k writes, 20k deletes / din); Blaze ho to panel mein badlo. Roz ek quick scan + ghante mein alert-check (Telegram account add ho to).
+- Backup / delete / restore ab dono databases par chalte hain; chat backup ke naam mein `chat-` hota hai aur galat database mein restore nahi hone deta.
+- Data scan/history Firestore `bot_meta/usage_snapshots` aur `bot_meta/usage_cfg` mein; user edits ka log `admin_audit` mein (password kabhi nahi likhta).

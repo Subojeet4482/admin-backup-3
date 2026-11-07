@@ -57,6 +57,7 @@ def get_db():
 _chat_app = None
 _chat_db = None
 _chat_err = None
+_chat_project_id = None
 
 
 def chat_env():
@@ -73,7 +74,7 @@ def chat_separate():
 
 def get_chat_db():
     """Chat ka Firestore client. Alag project ki key ho to wahi, warna main db."""
-    global _chat_app, _chat_db, _chat_err
+    global _chat_app, _chat_db, _chat_err, _chat_project_id
     if not chat_separate():
         return get_db()
     if _chat_db is not None:
@@ -84,6 +85,7 @@ def get_chat_db():
         get_db()                                   # main app pehle ready ho
         _chat_app = firebase_admin.initialize_app(credentials.Certificate(info), name="chat")
         _chat_db = firestore.client(app=_chat_app)
+        _chat_project_id = info.get("project_id")
         _chat_err = None
         return _chat_db
     except Exception as e:
@@ -104,6 +106,31 @@ def chat_custom_token(uid, claims=None):
 
 def verify_main_token(id_token):
     return auth.verify_id_token(id_token)
+
+
+def service_info(which="main"):
+    """Service-account JSON (dict) — which = 'main' ya 'chat'. Cloud Monitoring (usage) ke liye."""
+    if which == "chat":
+        raw = chat_env()
+        if not raw:
+            raise RuntimeError("Firebase 2 (chat) ki key set nahi hai (FIREBASE_CREDENTIALS_B641)")
+        return json.loads(raw) if raw.startswith("{") else json.loads(base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8"))
+    return load_service_account()
+
+
+def project_ids():
+    """{'main': project_id, 'chat': project_id ya None (alag project nahi to)}"""
+    out = {"main": None, "chat": None}
+    try:
+        out["main"] = service_info("main").get("project_id")
+    except Exception:
+        pass
+    if chat_separate():
+        try:
+            out["chat"] = service_info("chat").get("project_id")
+        except Exception:
+            pass
+    return out
 
 
 def firebase_status():

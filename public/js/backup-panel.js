@@ -86,7 +86,7 @@ A.bkDelete = async function (n) { const v = await A.askDanger({ title: 'Backup d
 async function safety() { const r = await A.api('/api/backups', { body: { subcollections: true } }); return (await A.trackJob(r.job, 'Restore se pehle backup')).status === 'done'; }
 A.bkRestore = async function (n) {
   const v = await A.askDanger({ title: 'Restore karna hai?', text: `${n} ke docs Firestore mein overwrite honge.`, typed: 'RESTORE', backup: true, backupLabel: 'Restore se pehle abhi ka data backup lo', okLabel: 'Restore' }); if (!v) return;
-  try { if (v.backup && !(await safety())) return; const r = await A.api('/api/backups/' + encodeURIComponent(n) + '/restore', { body: { pin: v.pin } }); const j = await A.trackJob(r.job, 'Restore'); if (j.status === 'done') A.toast(`${j.result.restored} docs restore ho gaye`); A.bkLoad(); } catch (e) { A.fail(e); }
+  try { if (v.backup && !(await safety())) return; const r = await A.api('/api/backups/' + encodeURIComponent(n) + '/restore', { body: { pin: v.pin, db: /_chat-/.test(n) ? 'chat' : 'main' } }); const j = await A.trackJob(r.job, 'Restore'); if (j.status === 'done') A.toast(`${j.result.restored} docs restore ho gaye`); A.bkLoad(); } catch (e) { A.fail(e); }
 };
 A.bkUploadRestore = async function () {
   const f = $('restore-file').files[0]; if (!f) return A.toast('Pehle file select karo', 'err');

@@ -50,13 +50,13 @@ def run_job(kind, fn, *a, **kw):
 
 
 # ------------------------------------------------------------------ helpers
-def list_root_collections():
-    return sorted(c.id for c in fb.get_db().collections())
+def list_root_collections(db=None):
+    return sorted(c.id for c in (db or fb.get_db()).collections())
 
 
-def count_docs(col):
+def count_docs(col, db=None):
     try:
-        r = fb.get_db().collection(col).count().get()
+        r = (db or fb.get_db()).collection(col).count().get()
         return int(r[0][0].value)
     except Exception:
         return None
@@ -92,18 +92,21 @@ PROBE_SUBS = os.environ.get("BACKUP_PROBE_SUBS", "").lower() in ("1", "true", "y
 EXTRA_SUBS = tuple(x.strip() for x in os.environ.get("BACKUP_EXTRA_SUBS", "").split(",") if x.strip())
 
 
-def do_backup(job, collections=None, include_sub=True, label="manual"):
-    db = fb.get_db()
-    cols = collections or list_root_collections()
+def do_backup(job, collections=None, include_sub=True, label="manual", db=None, which="main"):
+    """which='chat' -> Firebase 2 (chat database); file ke naam mein 'chat-' lagta hai aur meta mein db='chat'."""
+    db = db or fb.get_db()
+    cols = collections or list_root_collections(db)
     ts = dt.datetime.now(dt.timezone.utc)
+    if which == "chat":
+        label = "chat-" + (label or "manual")
     name = f"ffbackup_{ts.strftime('%Y%m%d_%H%M%S')}_{_safe_label(label) or 'manual'}.ffbak.gz"
     path = os.path.join(BACKUP_DIR, name)
     tmp = path + ".part"
     total = 0
     with gzip.open(tmp, "wt", encoding="utf-8") as f:
         f.write(json.dumps({"_meta": {"format": FORMAT, "createdAt": ts.isoformat(),
-                                      "project": fb.firebase_status().get("project_id"),
-                                      "collections": cols, "subcollections": include_sub}}) + "\n")
+                                      "project": (fb.project_ids().get("chat") if which == "chat" else fb.firebase_status().get("project_id")),
+                                      "db": which, "collections": cols, "subcollections": include_sub}}) + "\n")
 
         pacer = slow.backup_pacer(auto=(label == "auto"))     # backup AAKHDAM dheema (auto-backup usse bhi 2x dheema)
 
@@ -202,8 +205,23 @@ def _iter_records(path):
         raise ValueError("Backup file ka format samajh nahi aaya")
 
 
-def do_restore(job, path, only=None):
-    db = fb.get_db()
+def read_meta(path):
+    """Backup file ki pehli line ka _meta (v2). Purani files / error par {}."""
+    try:
+        opener = gzip.open if path.endswith(".gz") else open
+        with opener(path, "rt", encoding="utf-8") as f:
+            first = json.loads(f.readline())
+        return first.get("_meta", {}) if isinstance(first, dict) else {}
+    except Exception:
+        return {}
+
+
+def do_restore(job, path, only=None, db=None, which="main"):
+    # Galat database mein restore hone se bachao: file ka db (default main) target se match hona chahiye
+    file_db = read_meta(path).get("db") or "main"
+    if file_db != which:
+        raise RuntimeError(f"Ye backup '{file_db}' database ka hai, aap '{which}' mein restore kar rahe ho — galat database")
+    db = db or fb.get_db()
     only = set(only or [])
     batch, n, skipped = db.batch(), 0, 0
     pending = 0
@@ -225,12 +243,12 @@ def do_restore(job, path, only=None):
 
 
 # ------------------------------------------------------------------ delete
-def do_delete_collection(job, col, backup_first=True):
-    db = fb.get_db()
+def do_delete_collection(job, col, backup_first=True, db=None, which="main"):
+    db = db or fb.get_db()
     res = {"collection": col}
     if backup_first:
         job["progress"] = f"Delete se pehle {col} ka backup…"
-        b = do_backup(job, [col], True, f"pre-delete-{col}")
+        b = do_backup(job, [col], True, f"pre-delete-{col}", db=db, which=which)
         res["backup"] = b["name"]
     job["progress"] = f"{col} delete ho raha hai…"
     deleted = slow.delete_tree(db, db.collection(col))
@@ -238,18 +256,18 @@ def do_delete_collection(job, col, backup_first=True):
     return res
 
 
-def do_delete_doc(job, path, recursive=True, backup_first=True):
-    db = fb.get_db()
+def do_delete_doc(job, path, recursive=True, backup_first=True, db=None, which="main"):
+    db = db or fb.get_db()
     ref = db.document(path)
     res = {"path": path}
     if backup_first:
         # chhota backup: sirf yeh doc (+subs)
         job["progress"] = "Doc ka backup…"
         ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
-        name = f"ffbackup_{ts}_pre-delete-doc.ffbak.gz"
+        name = f"ffbackup_{ts}_pre-delete-doc{'-chat' if which == 'chat' else ''}.ffbak.gz"
         p = os.path.join(BACKUP_DIR, name)
         with gzip.open(p, "wt", encoding="utf-8") as f:
-            f.write(json.dumps({"_meta": {"format": FORMAT, "createdAt": ts, "collections": [path.split('/')[0]]}}) + "\n")
+            f.write(json.dumps({"_meta": {"format": FORMAT, "createdAt": ts, "db": which, "collections": [path.split('/')[0]]}}) + "\n")
             snap = ref.get()
             if snap.exists:
                 f.write(json.dumps({"p": ref.path, "d": fb.enc(snap.to_dict() or {})}) + "\n")
@@ -265,9 +283,9 @@ def do_delete_doc(job, path, recursive=True, backup_first=True):
     return res
 
 
-def do_delete_older(job, col, field, days, kind="ms", backup_first=True):
+def do_delete_older(job, col, field, days, kind="ms", backup_first=True, db=None, which="main"):
     """col mein jin docs ka `field` `days` se purana hai unhe delete karo (subcollections ke saath)."""
-    db = fb.get_db()
+    db = db or fb.get_db()
     cutoff = time.time() - days * 86400
     cutoff_val = int(cutoff * 1000) if kind == "ms" else dt.datetime.fromtimestamp(cutoff, dt.timezone.utc)
     q = db.collection(col).where(field, "<", cutoff_val)
@@ -279,9 +297,9 @@ def do_delete_older(job, col, field, days, kind="ms", backup_first=True):
     if backup_first:
         job["progress"] = f"{len(snaps)} docs ka backup…"
         ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
-        name = f"ffbackup_{ts}_pre-clean-{_safe_label(col)}.ffbak.gz"
+        name = f"ffbackup_{ts}_pre-clean{'-chat' if which == 'chat' else ''}-{_safe_label(col)}.ffbak.gz"
         with gzip.open(os.path.join(BACKUP_DIR, name), "wt", encoding="utf-8") as f:
-            f.write(json.dumps({"_meta": {"format": FORMAT, "createdAt": ts, "collections": [col]}}) + "\n")
+            f.write(json.dumps({"_meta": {"format": FORMAT, "createdAt": ts, "db": which, "collections": [col]}}) + "\n")
             for s in slow.paced(snaps, 50, 0.5):
                 f.write(json.dumps({"p": s.reference.path, "d": fb.enc(s.to_dict() or {})}) + "\n")
         res["backup"] = name
